@@ -6,7 +6,8 @@ from main import DB_PATH, app
 
 
 def iso(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    kst = timezone(timedelta(hours=9))
+    return dt.astimezone(kst).isoformat()
 
 
 def run() -> None:

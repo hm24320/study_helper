@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
@@ -14,6 +14,7 @@ from pydantic import BaseModel, validator
 
 DB_PATH = Path("study_assistant.db")
 SCHEMA_PATH = Path("schema.sql")
+KST = timezone(timedelta(hours=9))
 
 
 def get_db() -> sqlite3.Connection:
@@ -40,10 +41,10 @@ class TaskState(str, Enum):
     EXPIRED = "EXPIRED"
 
 
-def ensure_utc(dt: datetime) -> datetime:
+def ensure_kst(dt: datetime) -> datetime:
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=KST)
+    return dt.astimezone(KST)
 
 
 class CreateTaskRequest(BaseModel):
@@ -65,7 +66,7 @@ class CreateTaskRequest(BaseModel):
 
     @validator("due_at_iso")
     def ensure_timezone(cls, value: datetime) -> datetime:
-        return ensure_utc(value)
+        return ensure_kst(value)
 
 
 class VerificationAttemptRequest(BaseModel):
@@ -111,7 +112,7 @@ def on_startup() -> None:
 
 
 def expire_overdue_tasks(conn: sqlite3.Connection) -> None:
-    now = ensure_utc(datetime.utcnow())
+    now = ensure_kst(datetime.now(tz=KST))
     conn.execute(
         """
         UPDATE tasks
@@ -145,11 +146,11 @@ def fetch_tasks(
 
     if due_before:
         query.append("AND due_at < ?")
-        params.append(ensure_utc(due_before).isoformat())
+        params.append(ensure_kst(due_before).isoformat())
 
     if due_after:
         query.append("AND due_at > ?")
-        params.append(ensure_utc(due_after).isoformat())
+        params.append(ensure_kst(due_after).isoformat())
 
     query.append("ORDER BY due_at ASC")
 
@@ -159,7 +160,7 @@ def fetch_tasks(
 @app.post("/v1/tasks", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 def create_task(payload: CreateTaskRequest, conn: sqlite3.Connection = Depends(get_db)) -> TaskResponse:
     task_id = str(uuid.uuid4())
-    due_at = payload.due_at_iso.isoformat()
+    due_at = ensure_kst(payload.due_at_iso).isoformat()
     conn.execute(
         """
         INSERT INTO tasks (id, title, verify_method, due_at, state)
@@ -173,7 +174,7 @@ def create_task(payload: CreateTaskRequest, conn: sqlite3.Connection = Depends(g
         id=task_id,
         title=payload.title.strip(),
         verify_method=payload.verify_method.strip(),
-        due_at_iso=ensure_utc(payload.due_at_iso).isoformat().replace("+00:00", "Z"),
+        due_at_iso=ensure_kst(payload.due_at_iso).isoformat(),
         state=TaskState.PENDING,
     )
 
@@ -193,7 +194,7 @@ def list_tasks(
             id=row["id"],
             title=row["title"],
             verify_method=row["verify_method"],
-            due_at_iso=ensure_utc(datetime.fromisoformat(row["due_at"])).isoformat().replace("+00:00", "Z"),
+            due_at_iso=ensure_kst(datetime.fromisoformat(row["due_at"])).isoformat(),
             state=row["state"],
         )
         for row in rows
